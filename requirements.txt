@@ -1,0 +1,12 @@
+ipython
+jupyter
+nltk
+torch
+torchtext
+boltons
+cached_property
+attrs
+tqdm
+networkx
+gensim
+jieba
