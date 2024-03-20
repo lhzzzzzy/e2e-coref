@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-
+import json
 
 def pad_and_stack(tensors, pad_size=None, value=0):
     """ Pad and stack an uneven tensor of token lookup ids.
@@ -31,3 +31,27 @@ def to_cuda(x):
     # if torch.cuda.is_available():
     #     x = x.cuda()
     return x
+
+def extract_gold_corefs(document):
+    gold_corefs = []
+    gold_mentions = []
+
+    for span in document["spans"]:
+        cur_span = (span["span"]["begin"], span["span"]["end"])
+        gold_mentions.append(cur_span)
+        for pre_span in span["pre_spans"]:
+            gold_corefs.append((cur_span,(pre_span["begin"],pre_span["end"])))
+    
+    return gold_corefs, gold_mentions
+
+if __name__ == "__main__":
+    with open("dataset/new_train/10.json","r") as f:
+        data = json.load(f)
+    gold_corefs, gold_mentions = extract_gold_corefs(data)
+
+    for i in gold_corefs:
+        print(i)
+
+    print()
+    for j in gold_mentions:
+        print(j)

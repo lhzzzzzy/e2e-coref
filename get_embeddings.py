@@ -2,13 +2,14 @@
 from gensim.models import KeyedVectors 
 import numpy as np
 import jieba
+import torch
 
 
-file = 'embedding.txt' 
-w2v_model = KeyedVectors.load_word2vec_format(file, binary=False)
-# 载入模型
-w2v_model.save('Tencent_AILab_ChineseEmbedding.bin')
-w2v_model = KeyedVectors.load('Tencent_AILab_ChineseEmbedding.bin')
+# file = 'embedding/embedding.txt' 
+# w2v_model = KeyedVectors.load_word2vec_format(file, binary=False)
+# # 载入模型
+# w2v_model.save('embedding/Tencent_AILab_ChineseEmbedding.bin')
+w2v_model = KeyedVectors.load('embedding/Tencent_AILab_ChineseEmbedding.bin')
 # 加载模型
 
 # 获取词的向量表示 100维向量
@@ -19,10 +20,18 @@ words = ['及时雨', '宋江']
 vector = {}
 for word in words:
     if word not in w2v_model:
-        wor = jieba.lcut(place)
+        wor = jieba.lcut(word)
         v = np.zeros((100,), dtype='float32')
         for w in wor:
             v += w2v_model[word]
         vector[word] = v / len(wor)
     else:
         vector[word] = w2v_model[word]
+
+print(vector)
+ls = []
+for w in words:
+    ls.append(vector[w])
+
+tensor = torch.tensor(ls)
+print(tensor.shape)

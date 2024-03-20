@@ -7,7 +7,10 @@ from datetime import datetime
 from tqdm import tqdm
 import networkx as nx
 from subprocess import Popen
-
+import jieba
+import numpy as np
+import os
+from gensim.models import KeyedVectors 
 
 class FFNN(nn.Module):
     def __init__(self, input_dim, hidden_dim=150):
@@ -53,10 +56,11 @@ class Distance(nn.Module):
 
 
 class WordEncoder(nn.Module):
-    def __init__(self, embed_dim, hidden_dim, n_layers=1):
+    def __init__(self, embed_dim, hidden_dim, embed_model, n_layers=1):
 
         super().__init__()
-        self.glove = None
+        self.embed_dim = embed_dim
+        self.embed_model = embed_model
         self.lstm = nn.LSTM(embed_dim,
                             hidden_dim,
                             num_layers=n_layers,
@@ -65,7 +69,7 @@ class WordEncoder(nn.Module):
 
     def forward(self, inputs):
 
-        embeds = self.embed_model(inputs)
+        embeds = self.embed_words(inputs,self.embed_dim)
         # (L,embed_dim) --> (1, L, embed_dim)
         embeds = embeds.unsqueeze(0)
 
@@ -73,8 +77,13 @@ class WordEncoder(nn.Module):
         # (1, L,embed_dim) --> (L, embed_dim)        
         return embeds.squeeze(0), x.squeeze(0)
     
-    def embed_model(self, inputs):
-        return torch.zeros(20, 10) 
+    def embed_words(self, words,embed_size):
+        embeddings = np.zeros((len(words),embed_size),dtype='float32')
+        for i, word in enumerate(words):
+            if word in self.embed_model:
+                embeddings[i] = self.embed_model[word]
+
+        return torch.tensor(embeddings)
     
 
 class SpanEncoder(nn.Module):
@@ -125,7 +134,7 @@ class SpanEncoder(nn.Module):
         for i in range(len(spans)):
             spans[i]["mscore"] = mention_score[i]
         # TODO:
-        spans = self.purne_and_get_prespan(spans, 20)
+        spans = self.purne_and_get_prespan(spans, len(spans))
 
         gidx = []
         for i in range(len(spans)):
@@ -133,7 +142,7 @@ class SpanEncoder(nn.Module):
 
         g_ij = []
         idx_i,idx_j,dis = [],[],[]
-        # TODO:
+
         for i in range(1, len(spans)):
             for j in range(i):
                 idx_i.append(spans[i]["idx"])
@@ -165,7 +174,7 @@ class SpanEncoder(nn.Module):
         epsilon = to_var(torch.tensor([[0.]]))
         with_epsilon = [torch.cat((score, epsilon), dim=0) for score in split_scores]
 
-        probs = [F.softmax(tensr) for tensr in with_epsilon]
+        probs = [F.softmax(tensr,dim=0) for tensr in with_epsilon]
         
         
 
@@ -202,12 +211,16 @@ class SpanEncoder(nn.Module):
         sorted_spans = sorted(spans, key=lambda s: s["mscore"], reverse=True)
 
         nonoverlapping, seen = [], set()
-        for s in sorted_spans:
-            indexes = range(s["start"], s["end"]+1)
-            taken = [i in seen for i in indexes]
-            if len(set(taken)) == 1 or (taken[0] == taken[-1] == False):
-                nonoverlapping.append(s)
-                seen.update(indexes)
+        for span in sorted_spans:
+            flag = True
+            for (st,ed) in seen:
+                if (span["start"]<st and st<= span["end"] and span["end"]< ed) or (st < span["start"] and span["start"]<=ed and ed <span["end"]):
+                    flag = False
+                    break
+                
+            if flag:
+                nonoverlapping.append(span)
+                seen.add((span["start"],span["end"]))              
 
         pruned_spans = nonoverlapping[:STOP]
 
@@ -223,6 +236,7 @@ class SpanEncoder(nn.Module):
 class CorefModel(nn.Module):
     def __init__(self, embeds_dim,
                        hidden_dim,
+                       embed_model,
                        char_filters=50,
                        distance_dim=20,
                        genre_dim=20,
@@ -240,7 +254,7 @@ class CorefModel(nn.Module):
         gij_dim = gi_dim*3 + distance_dim
 
         # Initialize modules
-        self.encoder = WordEncoder(embeds_dim, hidden_dim)
+        self.encoder = WordEncoder(embeds_dim, hidden_dim, embed_model)
         self.score_spans = SpanEncoder(lstm_dim=lstm_dim,distant_dim=distance_dim,gi_dim=gi_dim,gij_dim=gij_dim)
 
     def forward(self, sentence):
@@ -253,13 +267,13 @@ class CorefModel(nn.Module):
 class Trainer:
     """ Class dedicated to training and evaluating the model
     """
-    def __init__(self, model, train_corpus, val_corpus, test_corpus,
-                    lr=1e-3, steps=100):
+    def __init__(self, model, train_corpus="dataset/new_train", val_corpus="dataset/new_validation"
+                 , test_corpus="dataset/new_test", lr=1e-3, steps=100):
 
         self.__dict__.update(locals())
 
-        self.train_corpus = list(self.train_corpus)
-        self.val_corpus = self.val_corpus
+        self.train_corpus = os.listdir(train_corpus)
+        self.val_corpus = os.listdir(val_corpus)
         
         self.model = to_cuda(model)
 
@@ -270,13 +284,13 @@ class Trainer:
                                                    step_size=100,
                                                    gamma=0.001)
 
-    def train(self, num_epochs, eval_interval=10, *args, **kwargs):
+    def train(self, num_epochs, eval_interval=100):
         """ Train a model """
         for epoch in range(1, num_epochs+1):
-            self.train_epoch(epoch, *args, **kwargs)
+            self.train_epoch(epoch)
 
             # Save often
-            self.save_model(str(datetime.now()))
+            # self.save_model(str(datetime.now())) 
 
             # Evaluate every eval_interval epochs
             if epoch % eval_interval == 0:
@@ -299,75 +313,59 @@ class Trainer:
 
         for document in tqdm(batch):
 
-            # Randomly truncate document to up to 50 sentences
-            doc = document.truncate()
-
+            with open("dataset/new_train/" + document, "r") as f:
+                doc = json.load(f)
             # Compute loss, number gold links found, total gold links
-            loss, mentions_found, total_mentions, \
-                corefs_found, total_corefs, corefs_chosen = self.train_doc(doc)
+            loss = self.train_doc(doc)
 
-            # Track stats by document for debugging
-            print(document, '| Loss: %f | Mentions: %d/%d | Coref recall: %d/%d | Corefs precision: %d/%d' \
-                % (loss, mentions_found, total_mentions,
-                    corefs_found, total_corefs, corefs_chosen, total_corefs))
-
-            epoch_loss.append(loss)
-            epoch_mentions.append(safe_divide(mentions_found, total_mentions))
-            epoch_corefs.append(safe_divide(corefs_found, total_corefs))
-            epoch_identified.append(safe_divide(corefs_chosen, total_corefs))
 
         # Step the learning rate decrease scheduler
         self.scheduler.step()
 
-        print('Epoch: %d | Loss: %f | Mention recall: %f | Coref recall: %f | Coref precision: %f' \
-                % (epoch, np.mean(epoch_loss), np.mean(epoch_mentions),
-                    np.mean(epoch_corefs), np.mean(epoch_identified)))
+        print('Epoch: %d | Loss: %f ' \
+                % (epoch, np.mean(epoch_loss)))
 
     def train_doc(self, document):
         """ Compute loss for a forward pass over a document """
 
         # Extract gold coreference links
-        gold_corefs, total_corefs, \
-            gold_mentions, total_mentions = extract_gold_corefs(document)
+        gold_corefs, gold_mentions= extract_gold_corefs(document)
 
         # Zero out optimizer gradients
         self.optimizer.zero_grad()
 
         # Init metrics
-        mentions_found, corefs_found, corefs_chosen = 0, 0, 0
+        # mentions_found, corefs_found, corefs_chosen = 0, 0, 0
 
         # Predict coref probabilites for each span in a document
-        spans, probs = self.model(document)
+        spans, probs = self.model(document["sentence"])
 
         # Get log-likelihood of correct antecedents implied by gold clustering
         gold_indexes = to_cuda(torch.zeros_like(probs))
         for idx, span in enumerate(spans):
 
             # Log number of mentions found
-            if (span.i1, span.i2) in gold_mentions:
-                mentions_found += 1
+            if (span["start"], span["end"]) in gold_mentions:
+                # mentions_found += 1
 
                 # Check which of these tuples are in the gold set, if any
                 golds = [
-                    i for i, link in enumerate(span.yi_idx)
-                    if link in gold_corefs
+                    i for i in span["pre_spans"]
+                    if ((span["start"],span["end"]),(span[i]["start"],span[i]["end"])) in gold_corefs
                 ]
 
                 # If gold_pred_idx is not empty, consider the probabilities of the found antecedents
                 if golds:
                     gold_indexes[idx, golds] = 1
-
                     # Progress logging for recall
-                    corefs_found += len(golds)
-                    found_corefs = sum((probs[idx, golds] > probs[idx, len(span.yi_idx)])).detach()
-                    corefs_chosen += found_corefs.item()
                 else:
                     # Otherwise, set gold to dummy
                     gold_indexes[idx, len(span.yi_idx)] = 1
 
         # Negative marginal log-likelihood
         eps = 1e-8
-        loss = torch.sum(torch.log(torch.sum(torch.mul(probs, gold_indexes), dim=1).clamp_(eps, 1-eps), dim=0) * -1)
+
+        loss = torch.sum(torch.log(torch.sum(torch.mul(probs, gold_indexes), dim=1).clamp_(eps, 1-eps)) * -1)
 
         # Backpropagate
         loss.backward()
@@ -375,8 +373,7 @@ class Trainer:
         # Step the optimizer
         self.optimizer.step()
 
-        return (loss.item(), mentions_found, total_mentions,
-                corefs_found, total_corefs, corefs_chosen)
+        return loss.item()
 
     def evaluate(self, val_corpus, eval_script='../src/eval/scorer.pl'):
         """ Evaluate a corpus of CoNLL-2012 gold files """
@@ -419,8 +416,8 @@ class Trainer:
 
             # Loss implicitly pushes coref links above 0, rest below 0
             found_corefs = [idx
-                            for idx, _ in enumerate(span.yi_idx)
-                            if probs[i, idx] > probs[i, len(span.yi_idx)]]
+                            for idx, _ in enumerate(span["pre_spans"])
+                            if probs[i, idx] > probs[i, len(span["pre_spans"])]]
 
             # If we have any
             if any(found_corefs):
@@ -428,7 +425,7 @@ class Trainer:
                 # Add edges between all spans in the cluster
                 for coref_idx in found_corefs:
                     link = spans[coref_idx]
-                    graph.add_edge((span.i1, span.i2), (link.i1, link.i2))
+                    graph.add_edge((span["begin"], span["end"]), (link["begin"], link["end"]))
 
         # Extract clusters as nodes that share an edge
         clusters = list(nx.connected_components(graph))
@@ -462,3 +459,13 @@ class Trainer:
         self.model.load_state_dict(state)
         self.model = to_cuda(self.model)
 
+
+if __name__ == "__main__":
+    
+    w2v_model = KeyedVectors.load('embedding/Tencent_AILab_ChineseEmbedding.bin')
+    model = CorefModel(embeds_dim=100,hidden_dim=200,embed_model=w2v_model)
+
+    trainer = Trainer(model)
+    
+    trainer.train(1)
+    
