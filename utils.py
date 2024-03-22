@@ -28,8 +28,8 @@ def to_var(x):
 
 def to_cuda(x):
     """ GPU-enable a tensor """
-    # if torch.cuda.is_available():
-    #     x = x.cuda()
+    if torch.cuda.is_available():
+        x = x.cuda()
     return x
 
 def extract_gold_corefs(document):

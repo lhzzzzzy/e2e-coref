@@ -9,4 +9,4 @@ if __name__ == "__main__":
 
     trainer = Trainer(model)
     
-    trainer.train(1)
+    trainer.train(10)

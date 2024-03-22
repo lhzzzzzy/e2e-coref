@@ -42,9 +42,9 @@ class Distance(nn.Module):
 
     def stoi(self, lengths):
         """ Find which bin a number falls into """
-        return torch.tensor([
+        return to_cuda(torch.tensor([
             sum([True for i in self.bins if num >= i]) for num in lengths], requires_grad=False
-        )
+        ))
 
 
 class WordEncoder(nn.Module):
@@ -58,16 +58,21 @@ class WordEncoder(nn.Module):
                             num_layers=n_layers,
                             bidirectional=True,
                             batch_first=True)
+        
+        self.emb_dropout = nn.Dropout(0.50)
+        self.lstm_dropout = nn.Dropout(0.20)
 
     def forward(self, inputs):
 
         embeds = self.embed_words(inputs,self.embed_dim)
+        self.emb_dropout(embeds[0])
         # (L,embed_dim) --> (1, L, embed_dim)
-        embeds = embeds.unsqueeze(0)
+        new_embeds = embeds.unsqueeze(0)
 
-        x, _ = self.lstm(embeds)
-        # (1, L,embed_dim) --> (L, embed_dim)        
-        return embeds.squeeze(0), x.squeeze(0)
+        x, _ = self.lstm(to_cuda(new_embeds))
+        # (1, L,embed_dim) --> (L, embed_dim)   
+        self.lstm_dropout(x[0])     
+        return embeds, x.squeeze(0)
     
     def embed_words(self, words,embed_size):
         embeddings = np.zeros((len(words),embed_size),dtype='float32')
@@ -109,7 +114,7 @@ class SpanEncoder(nn.Module):
         a_it = F.softmax(padded_attns,dim=1)
 
         
-        attn_embeds = torch.sum(torch.mul(padded_embeds, a_it), dim=1)
+        attn_embeds = torch.sum(torch.mul(to_cuda(padded_embeds), to_cuda(a_it)), dim=1)
 
         # Compute span widths (i.e. lengths), embed them
         widths = self.width([ (s["end"]-s["start"]) for s in spans])
@@ -143,16 +148,16 @@ class SpanEncoder(nn.Module):
 
         phi_ij = self.distance(dis)
 
-        gi = torch.index_select(g_i,0,torch.tensor(idx_i))
-        gj = torch.index_select(g_i,0,torch.tensor(idx_j))
+        gi = torch.index_select(to_cuda(g_i),0,to_cuda(torch.tensor(idx_i)))
+        gj = torch.index_select(to_cuda(g_i),0,to_cuda(torch.tensor(idx_j)))
 
 
         g_ij = torch.cat((gi,gj,gi*gj,phi_ij),dim=1)
 
         antecedent_score = self.ffnn_a(g_ij)
 
-        sm_i = torch.index_select(mention_score, 0, torch.tensor(idx_i))
-        sm_j = torch.index_select(mention_score, 0, torch.tensor(idx_j))
+        sm_i = torch.index_select(to_cuda(mention_score), 0, to_cuda(torch.tensor(idx_i)))
+        sm_j = torch.index_select(to_cuda(mention_score), 0, to_cuda(torch.tensor(idx_j)))
 
         coref_scores = torch.sum(torch.cat((sm_i, sm_j, antecedent_score), dim=1), dim=1, keepdim=True)
 
@@ -180,7 +185,7 @@ class SpanEncoder(nn.Module):
         spans = []
         num = 0
         for start in range(n):
-            for end in range(start + 1, min(start + L, n)):
+            for end in range(start, min(start + L, n)):
                 spans.append({
                     "start":start, 
                     "end":end, 

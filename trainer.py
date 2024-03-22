@@ -7,14 +7,11 @@ import os
 from utils import *
 import numpy as np
 from typing import Set, List
-
+import random
+torch.autograd.set_detect_anomaly(True)
 
 def flatten(l):
-    """
-    list��Ƕ�ױ�ɳ�list
-    :param l: [[1, 2], [3, 4]]
-    :return:  [1, 2, 3, 4]
-    """
+
     return [item for sublist in l for item in sublist]
 
 
@@ -23,24 +20,21 @@ class BaseCorefMetric:
         pass
 
     def calculate_p(self, keys: List, responses: List) -> float:
-        """
-        ���㾫ȷ��
-        """
+
         raise NotImplementedError
 
     def calculate_r(self, keys: List, responses: List) -> float:
-        """
-        �����ٻ���
-        """
+
         raise NotImplementedError
 
     def calculate_f(self, keys: List, responses: List) -> float:
-        """
-        ����F1
-        """
+
         p = self.calculate_p(keys, responses)
         r = self.calculate_r(keys, responses)
-        return (2 * p * r) / (p + r)
+        if (p+r) == 0:
+            return 0
+        else:
+            return (2 * p * r) / (p + r)
 
 class MUC(BaseCorefMetric):
     """
@@ -63,10 +57,15 @@ class MUC(BaseCorefMetric):
             partitions.append(partition)
         numerator = sum([len(response) - partition for response, partition in zip(responses, partitions)])
         denominator = sum([len(response) - 1 for response in responses])
-        return numerator / denominator
+
+        if denominator == 0:
+            return 0.0  # or return None, depending on what you want
+        else:
+            return numerator / denominator
+
 
     def calculate_r(self, keys: List[Set], responses: List[Set]) -> float:
-        return self.calculate_p(responses, keys)
+            return self.calculate_p(responses, keys)
 
 # muc = MUC()
 # muc.calculate_f(keys, responses)   # 0.4
@@ -75,7 +74,7 @@ class Trainer:
     """ Class dedicated to training and evaluating the model
     """
     def __init__(self, model, train_corpus="dataset/new_train", val_corpus="dataset/new_validation"
-                 , test_corpus="dataset/new_test", lr=1e-3, steps=100):
+                 , test_corpus="dataset/new_test", lr=1e-3, steps=70):
 
         self.__dict__.update(locals())
 
@@ -88,10 +87,10 @@ class Trainer:
                                             if p.requires_grad], lr=lr)
 
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer,
-                                                   step_size=100,
-                                                   gamma=0.001)
+                                                   step_size=1,
+                                                   gamma=0.999)
 
-    def train(self, num_epochs, eval_interval=1):
+    def train(self, num_epochs, eval_interval=5):
         """ Train a model """
         for epoch in range(1, num_epochs+1):
             self.train_epoch(epoch)
@@ -113,8 +112,7 @@ class Trainer:
         self.model.train()
 
         # Randomly sample documents from the train corpus
-        # batch = random.sample(self.train_corpus, self.steps)
-        batch = self.train_corpus
+        batch = random.sample(self.train_corpus, self.steps)
 
         epoch_loss = []
 
@@ -125,7 +123,6 @@ class Trainer:
             # Compute loss, number gold links found, total gold links
             loss = self.train_doc(doc)
             epoch_loss.append(loss)
-
 
         # Step the learning rate decrease scheduler
         self.scheduler.step()
@@ -159,7 +156,7 @@ class Trainer:
                 # Check which of these tuples are in the gold set, if any
                 golds = [
                     i for i in span["pre_spans"]
-                    if ((span["start"],span["end"]),(span[i]["start"],span[i]["end"])) in gold_corefs
+                    if ((span["start"],span["end"]),(spans[i]["start"],spans[i]["end"])) in gold_corefs
                 ]
 
                 # If gold_pred_idx is not empty, consider the probabilities of the found antecedents
@@ -173,7 +170,9 @@ class Trainer:
         # Negative marginal log-likelihood
         eps = 1e-8
 
-        loss = torch.sum(torch.log(torch.sum(torch.mul(probs, gold_indexes), dim=1).clamp_(eps, 1-eps)) * -1)
+        # loss = torch.sum(torch.log(torch.sum(torch.mul(probs, gold_indexes), dim=1).clamp_(eps, 1-eps)) * -1)
+        loss = torch.sum(torch.log(torch.sum(torch.mul(probs, gold_indexes), dim=1).clamp_(eps, 1-eps)), dim=0) * -1
+        
 
         # Backpropagate
         loss.backward()
@@ -204,6 +203,9 @@ class Trainer:
             total_p += p
             total_r += r
             total_f += f
+            
+            if "45" in document:
+                break
 
         avg_p = total_p / len(eval_corpus)
         avg_r = total_r / len(eval_corpus)
@@ -229,9 +231,9 @@ class Trainer:
                 keys.append(set())
                 cnt += 1
                 
-            else:
-                idx = span_idx[coref[0]]
-                keys[idx].add(coref[1])
+            
+            idx = span_idx[coref[0]]
+            keys[idx].add(coref[1])
                 
         return keys, responses
 
