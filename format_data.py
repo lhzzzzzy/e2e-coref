@@ -2,7 +2,7 @@ import os
 import json
 import re
 
-folder_path = "dataset/new_train"
+folder_path = "dataset/new_validation"
 for item in os.listdir(folder_path):
     pth = os.path.join(folder_path,item)
     

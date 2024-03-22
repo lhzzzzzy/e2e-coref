@@ -125,7 +125,7 @@ class SpanEncoder(nn.Module):
 
         for i in range(len(spans)):
             spans[i]["mscore"] = mention_score[i]
-        # TODO:
+
         spans = self.purne_and_get_prespan(spans, len(spans))
 
         gidx = []
@@ -160,8 +160,7 @@ class SpanEncoder(nn.Module):
 
         # Split coref scores so each list entry are scores for its antecedents, only.
         # (NOTE that first index is a special case for torch.split, so we handle it here)
-        split_scores = [to_cuda(torch.tensor([]))] \
-                         + list(torch.split(coref_scores, antecedent_idx, dim=0))
+        split_scores =  list(torch.split(coref_scores, antecedent_idx, dim=0))
 
         epsilon = to_var(torch.tensor([[0.]]))
         with_epsilon = [torch.cat((score, epsilon), dim=0) for score in split_scores]

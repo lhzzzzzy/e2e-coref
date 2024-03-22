@@ -6,76 +6,12 @@ from subprocess import Popen
 import os
 from utils import *
 import numpy as np
-from typing import Set, List
-
-
-def flatten(l):
-    """
-    list��Ƕ�ױ�ɳ�list
-    :param l: [[1, 2], [3, 4]]
-    :return:  [1, 2, 3, 4]
-    """
-    return [item for sublist in l for item in sublist]
-
-
-class BaseCorefMetric:
-    def __init__(self, **args):
-        pass
-
-    def calculate_p(self, keys: List, responses: List) -> float:
-        """
-        ���㾫ȷ��
-        """
-        raise NotImplementedError
-
-    def calculate_r(self, keys: List, responses: List) -> float:
-        """
-        �����ٻ���
-        """
-        raise NotImplementedError
-
-    def calculate_f(self, keys: List, responses: List) -> float:
-        """
-        ����F1
-        """
-        p = self.calculate_p(keys, responses)
-        r = self.calculate_r(keys, responses)
-        return (2 * p * r) / (p + r)
-
-class MUC(BaseCorefMetric):
-    """
-    ����MUC����ָ��
-    ---------------
-    ver: 2022-10-25
-    by: changhongyu
-    """
-
-    def calculate_p(self, keys: List[Set], responses: List[Set]) -> float:
-        partitions = []
-        for response in responses:
-            partition = 0
-            un = set()
-            for key in keys:
-                if response.intersection(key):
-                    partition += 1
-                    un = un.union(key)
-            partition += len(response - un)
-            partitions.append(partition)
-        numerator = sum([len(response) - partition for response, partition in zip(responses, partitions)])
-        denominator = sum([len(response) - 1 for response in responses])
-        return numerator / denominator
-
-    def calculate_r(self, keys: List[Set], responses: List[Set]) -> float:
-        return self.calculate_p(responses, keys)
-
-# muc = MUC()
-# muc.calculate_f(keys, responses)   # 0.4
 
 class Trainer:
-    """ Class dedicated to training and evaluating the model
-    """
-    def __init__(self, model, train_corpus="dataset/new_train", val_corpus="dataset/new_validation"
-                 , test_corpus="dataset/new_test", lr=1e-3, steps=100):
+    """ Class dedicated to training and evaluating the model"""
+    
+    def __init__(self, model, train_corpus="dataset/new_train/", val_corpus="dataset/new_validation/"
+                 , test_corpus="dataset/new_test/", lr=1e-3, steps=100):
 
         self.__dict__.update(locals())
 
@@ -91,7 +27,7 @@ class Trainer:
                                                    step_size=100,
                                                    gamma=0.001)
 
-    def train(self, num_epochs, eval_interval=1):
+    def train(self, num_epochs, eval_interval=100):
         """ Train a model """
         for epoch in range(1, num_epochs+1):
             self.train_epoch(epoch)
@@ -125,6 +61,7 @@ class Trainer:
             # Compute loss, number gold links found, total gold links
             loss = self.train_doc(doc)
             epoch_loss.append(loss)
+            break
 
 
         # Step the learning rate decrease scheduler
@@ -151,7 +88,7 @@ class Trainer:
         # Get log-likelihood of correct antecedents implied by gold clustering
         gold_indexes = to_cuda(torch.zeros_like(probs))
         for idx, span in enumerate(spans):
-
+            
             # Log number of mentions found
             if (span["start"], span["end"]) in gold_mentions:
                 # mentions_found += 1
@@ -177,64 +114,29 @@ class Trainer:
 
         # Backpropagate
         loss.backward()
+        
+        print(self.predict(document))
 
         # Step the optimizer
         self.optimizer.step()
 
         return loss.item()
 
+    def evaluate(self, val_corpus, eval_script='../src/eval/scorer.pl'):
+        """ Evaluate a corpus of CoNLL-2012 gold files """
 
-    def evaluate(self, eval_corpus):
-        total_p = 0.0
-        total_r = 0.0
-        total_f = 0.0
+        # Predict files
+        print('Evaluating on validation corpus...')
+        
+        predicted_docs = []
+        for f_name in tqdm(val_corpus):
+            with open("dataset/new_validation/" + f_name, "r") as f:
+                data = json.load(f)
+            predicted_docs.append(self.predict(data))
 
-        muc_metric = MUC()
-
-        for document in tqdm(eval_corpus):
-            with open("dataset/new_validation/" + document, "r", encoding="utf-8") as f:
-                doc = json.load(f)
-
-            keys, responses = self.evaluate_doc(doc)
-
-            p = muc_metric.calculate_p(keys, responses)
-            r = muc_metric.calculate_r(keys, responses)
-            f = muc_metric.calculate_f(keys, responses)
-
-            total_p += p
-            total_r += r
-            total_f += f
-
-        avg_p = total_p / len(eval_corpus)
-        avg_r = total_r / len(eval_corpus)
-        avg_f = total_f / len(eval_corpus)
-
-        return {
-            'Average Precision': avg_p,
-            'Average Recall': avg_r,
-            'Average F1': avg_f
-        }
-
-    def evaluate_doc(self, document):
-        gold_corefs, gold_mentions = extract_gold_corefs(document)
-
-        responses = self.predict(document)
-
-        keys = []
-        span_idx = {}
-        cnt = 0
-        for coref in gold_corefs:
-            if coref[0] not in span_idx:
-                span_idx[coref[0]] = cnt
-                keys.append(set())
-                cnt += 1
-                
-            else:
-                idx = span_idx[coref[0]]
-                keys[idx].add(coref[1])
-                
-        return keys, responses
-
+        # TODO: calculate f1
+        
+        return results
 
     def predict(self, doc):
         """ Predict coreference clusters in a document """
@@ -242,10 +144,13 @@ class Trainer:
         # Set to eval mode
         self.model.eval()
 
+        # Initialize graph (mentions are nodes and edges indicate coref linkage)
+        graph = nx.Graph()
+
         # Pass the document through the model
         spans, probs = self.model(doc["sentence"])
 
-        span_clusters = []
+        span_clusters = {}
         # Cluster found coreference links
         for i, span in enumerate(spans):
 
@@ -265,7 +170,7 @@ class Trainer:
                 span_clusters.append(cluster)
 
         return span_clusters
-
+    
 
     def save_model(self, savepath):
         """ Save model state dictionary """
