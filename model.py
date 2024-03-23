@@ -131,7 +131,7 @@ class SpanEncoder(nn.Module):
         for i in range(len(spans)):
             spans[i]["mscore"] = mention_score[i]
 
-        spans = self.purne_and_get_prespan(spans, len(spans))
+        spans = self.purne_and_get_prespan(spans, embed_inputs.size(0))
 
         gidx = []
         for i in range(len(spans)):
@@ -195,7 +195,7 @@ class SpanEncoder(nn.Module):
                 num += 1
         return spans
     
-    def purne_and_get_prespan(self, spans, T, LAMBDA=0.5):
+    def purne_and_get_prespan(self, spans, T, LAMBDA=0.4):
         new_spans = []
         """ Prune mention scores to the top lambda percent.
             Returns list of tuple(scores, indices, g_i) """
@@ -233,10 +233,7 @@ class CorefModel(nn.Module):
     def __init__(self, embeds_dim,
                        hidden_dim,
                        embed_model,
-                       char_filters=50,
-                       distance_dim=20,
-                       genre_dim=20,
-                       speaker_dim=20):
+                       distance_dim=20):
 
         super().__init__()
 

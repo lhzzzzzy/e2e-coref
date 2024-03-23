@@ -5,7 +5,7 @@ from trainer import Trainer
 if __name__ == "__main__":
     
     w2v_model = KeyedVectors.load('embedding/Tencent_AILab_ChineseEmbedding.bin')
-    model = CorefModel(embeds_dim=100,hidden_dim=200,embed_model=w2v_model)
+    model = CorefModel(embeds_dim=100,hidden_dim=50,embed_model=w2v_model)
 
     trainer = Trainer(model)
     
