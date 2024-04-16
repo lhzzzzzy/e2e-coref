@@ -1,28 +1,34 @@
 import os
-import shutil
+import json
 
-# 源文件夹路径
-source_folder = '/home/lhzzzzzy/school_code/e2e-coref/dataset/new_validation'
+folder_path="dataset/validation"
 
-# 目标文件夹路径
-destination_folder = '/home/lhzzzzzy/school_code/e2e-coref/dataset/new_train'
+with open("dataset/raw_data.json","r") as f:
+    data = json.load(f)
 
-# 要移动的文件名列表，每个元素包含原文件名和新文件名
-files_to_move = []
-
-for i in range(601,1277):
-    files_to_move.append((f"{i}.json", f"{i-600+1664}.json"))
+for item in os.listdir(folder_path):
+    pth = os.path.join(folder_path,item)
     
-
-# 遍历要移动的文件列表
-for original_name, new_name in files_to_move:
+    with open(pth,"r",encoding="gbk") as f:
+        cur_data = json.load(f)
+        if cur_data == None:
+            continue
+        
+        sent_id = cur_data["pronoun"]["id"]
+        if sent_id != '19980127-09-001-033':
+            sent = data[sent_id]
+            cur_data[sent_id] = sent
+        for i in range(cur_data["antecedentNum"]):
+            
+            sent_id = cur_data[str(i)]["id"]
+            if sent_id == '19980127-09-001-033':
+                print(pth)
+                break
+            sent = data[sent_id]
+            
+            cur_data[sent_id] = sent
+            
+    updated_json = json.dumps(cur_data,indent=4,ensure_ascii=False)
     
-    source_file_path = os.path.join(source_folder, original_name)
-    # 构建目标文件路径
-    destination_file_path = os.path.join(destination_folder, new_name)
-    
-    new_name_pth = os.path.join(source_folder, new_name)
-    # 重命名文件
-    os.rename(source_file_path, new_name_pth)
-    # 执行移动操作
-    shutil.move(os.path.join(source_folder, new_name), destination_file_path) 
+    with open(pth,"w", encoding="gbk") as file:
+        file.write(updated_json)
