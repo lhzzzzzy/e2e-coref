@@ -10,13 +10,14 @@ from typing import Set, List
 import torch.nn as nn
 import random
 import math
+import time
 
 
 class Trainer:
     """ Class dedicated to training and evaluating the model
     """
     def __init__(self, model, train_corpus="dataset/train", val_corpus="dataset/validation"
-                 , test_corpus="dataset/new_test", lr=1e-3, steps=200):
+                 , test_corpus="dataset/new_test", lr=1e-3, steps=500):
 
         self.__dict__.update(locals())
 
@@ -49,7 +50,7 @@ class Trainer:
     def train_epoch(self, epoch):
         """ Run a training epoch over 'steps' documents """
         self.model.train()
-        
+        random.seed(time.time())
         batch = random.sample(self.train_corpus,self.steps)
         # batch = self.train_corpus        
         epoch_loss = []
@@ -92,7 +93,8 @@ class Trainer:
 
 
     def evaluate(self, eval_corpus):
-        val_batch = random.sample(eval_corpus, 50)
+        random.seed(time.time())
+        val_batch = random.sample(eval_corpus, 100)
         val_batch = eval_corpus
         tot_f, tot_r,tot_p=0,0,0
         cnt = 0
